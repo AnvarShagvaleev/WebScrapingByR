@@ -1,0 +1,133 @@
+# Web-scraping средствами R и анализ данных в R
+
+**Шагвалеев А.Р. - 09-115(3)**
+
+----
+
+## О данных
+
+В качестве сайта для парсинга был выбран сайт вторичной продажи автомобилей https://auto.drom.ru/.
+
+В качестве основного предмета парсинга была выбрана машина “Ford Focus” третьего поколения.
+
+В качестве данных для парсинга были выбраны:
+
++ Цена автомобиля
++ Год выпуска
++ Пробег
+
+
+## Работа с библиотеками
+
+Устанавливаем библиотеки
+```{r}
+# install.packages("rvest")
+# install.packages("tidyverse")
+# install.packages("glue")
+options(warn=-1)
+```
+
+Подключаем библиотеки
+
+```{r}
+library("rvest")
+library("tidyverse")
+library("glue")
+```
+
+## Парсинг данных
+
+Напишем скрипт, который будет пробегаться по 10 страницам и собирать год, пробег и цену машины, чистить полученные данные и заносить в датафрейм. Затем мы удалим все строки в датафрейме с пропущенными данными.  
+
+```{r}
+year_list <- c()
+mileage_list <- c()
+price_list <- c()
+
+# цикл для пробега по страницам
+for (i in 1:10) {
+  # задаем ссылку страницы
+  link <- str_c('https://auto.drom.ru/ford/focus/page', i, '/?minprice=500&minyear=1999&maxyear=2018&minprobeg=5')
+  source <- read_html(link)  
+  
+  # цикл для пробега по блокам объявлений
+  for (j in 1:20) {
+    # забираем год машины
+    source %>%
+      html_node(xpath=glue('(//span[@data-ftid="bull_title"])[{j}]')) %>%
+      html_text() -> year
+    
+    # забираем пробег машины
+    source %>%
+      html_node(xpath=glue('(//div[@ data-ftid="component_inline-bull-description"]/span[5])[{j}]')) %>%
+      html_text() -> mileage
+    
+    # забираем цену машины
+    source %>%
+      html_node(xpath=glue('(//span[@data-ftid="bull_price"])[{j}]')) %>%
+      html_text() -> price
+    
+    # чистим данные
+    year <- as.numeric(str_extract(year, '([0-9]+)')) # оставляем в тексте года только числа
+    mileage <- as.numeric(str_extract(mileage, '([0-9]+)')) # оставляем в тексте пробега только числа
+    # price <- as.numeric(str_c(substr(price, 1, 3), substr(price, 5, 7))) # оставляем в тексте цены только первые три числа
+    price <- as.numeric(substr(price, 1, 3))
+    
+    # каждый параметр заносим вектора
+    year_list <- append(year_list, year)
+    mileage_list <- append(mileage_list, mileage)
+    price_list <- append(price_list, price)
+
+  }
+}
+
+# создаем датафрейм
+df_list = list(year=year_list, mileage=mileage_list, price=price_list)
+df <- as.data.frame(do.call(cbind, df_list))
+
+df <- na.omit(df) # удаляем пропущенные значения
+
+head(df)
+```
+
+## Однофактоорный анализ
+
+### Цена от года
+
+Построим график и модель, прогнозирующую цену машины в зависимости от года.
+
+```{r}
+# строим график цены от года
+plot(df$year, df$price, xlab="year", ylab="price") # рисуем точки на график
+priyear <- lm(df$year ~ df$price) # строим модель линейной регрессии
+lines(predict(priyear), df$price, col = 'red') # рисуем график линейной регрессии
+print(priyear) # параметры модели
+```
+
+**Вывод**: чем моложе машина, тем она дороже, причем с каждым дополнительным годом цена увеличивается на 0.017.
+
+### Цена от пробега
+
+Построим график и модель, прогнозирующую цену машины в зависимости от пробега.
+
+```{r}
+# строим график цены от пробега
+plot(df$mileage, df$price, xlab="mileage", ylab="price") # рисуем точки на график
+primil <- lm(df$mileage ~ df$price) # строим модель линейной регрессии
+lines(predict(primil), df$price, col = 'red') # рисуем график линейной регрессии
+print(primil) # параметры модели
+```
+
+**Вывод**: чем меньше пробег у машины, тем она дороже, причем с каждым дополнительным километром цена увеличивается на 0.175.
+
+## Многофакторный анализ
+
+Теперь мостроим модель, которая будет предсказывать цену на основе года и пробега.
+
+```{r}
+# модель многофакторной линейной регрессии
+multymodel = lm(df$price ~ df$year + df$mileage )
+print(summary(multymodel))
+print(multymodel) # параметры модели
+```
+Видим, что коэффициент детерминации R-squared равен 0.8085. Это достаточно хороший показатель, так как чем она ближе к единице, тем ярче выражена зависимость факторами регрессии и зависимой переменной. Скорректированный коэффициент детерминации Adjusted R-squared равен 0.8065 (тут он не так важен, так как факторов у нас не много). 
